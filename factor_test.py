@@ -153,7 +153,7 @@ class FactorTest:
         fig, axes = plt.subplots(len(test_list)+1, 1, figsize=(20,10))
         # 循环画图
         for object, ax in zip(test_list, axes[:-1]):
-            ax.plot(x, self.data[object], label=object) #注意，这种方式只有一个y轴，要考虑量级，或者去除量纲
+            ax.plot(x, self.data[object], label=object) 
             # ax.bar(x, data, label=object)
             ax.xaxis.set_major_locator(plt.MaxNLocator(15))
             ax.set_title(f'{object}_Trend Chart')
