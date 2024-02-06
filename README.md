@@ -3,4 +3,4 @@
 
 2.factor_test：因子有效性测试 
 
-3.test_run：运行测试 
+3.run：运行测试 
