@@ -1,3 +1,4 @@
+# -*- coding = utf-8 -*-
 """
 统计及可视化之后，依据因子逻辑及统计表现：
 判断如何处理因子值（是否进行正态处理，是否处理偏度）；
@@ -13,9 +14,19 @@ from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.filters.hp_filter import hpfilter
 from tqdm import tqdm
 
+
 class FactorTest:
     """"""
     def __init__(self, asset, data, factor, start_date, end_date, reg_start_date, reg_end_date):
+        """
+        :param asset: 资产代码
+        :param data: dataframe数据
+        :param factor: 因子名称
+        :param start_date: 回测开始日期
+        :param end_date: 回测结束日期
+        :param reg_start_date: 回归开始日期, 回归要求数据不能有空值
+        :param reg_end_date: 回归结束日期，回归要求数据不能有空值
+        """
         self.asset = asset
         self.data = data
         self.factor = factor
@@ -26,6 +37,10 @@ class FactorTest:
 
     # 缺失值处理
     def process_na(self, method):
+        """
+        处理缺失值
+        :param method: 处理方法，'ffill'向前填充，'bfill'向后填充，'zero'填充为0......
+        """
         if method == 'ffill':
             self.data[self.factor].fillna(method, limit=2, inplace=True) # 最大连续填充期为2
         elif method == 'bfill':
@@ -41,8 +56,13 @@ class FactorTest:
         elif method == 'dropna':
             self.data = self.data.dropna(subset=[self.factor])
 
-    # 异常值处理，如果箱型图显示有比较多的异常值，需进行处理
+    # 异常值
     def MAD(self, threshold=3.0, cut=True):
+        """
+        异常值处理，如果箱型图显示有比较多的异常值，需进行处理
+        :param threshold: 阈值单位，超过阈值的为异常值
+        :param cut: 是否进行截断，True截断，False不截断
+        """
         df = self.data.copy()
         median = np.median(df[self.factor])
         diff = np.abs(df[self.factor] - median)
@@ -56,34 +76,46 @@ class FactorTest:
             df.loc[df[df[self.factor] >= upper].index, self.factor] = upper
         return df
 
-    # 标准化
-    def Z_Score(self, window):  ## 分位数转换，也是正态化的一种
+    # 标准化, 标准化后做拟合时，需要注意单位量纲，回归系数可能会很小
+    def Z_Score(self, window):
+        """
+        标准化处理
+        :param window: 滚动窗口大小
+        """
         temp_mean = self.data[self.factor].rolling(window).mean()
         temp_std = self.data[self.factor].rolling(window).std(ddof=1)
         self.data['stad_' + self.factor] = (self.data[self.factor] - temp_mean) / temp_std
 
     def min_max_scaling(self, window):
+        """同上"""
         self.data['stad_' + self.factor] = (self.data[self.factor].rolling(window)
                                             .apply(lambda x: (x - x.min()) / (x.max() - x.min()), raw=True))
 
     def rank_trans(self, window):
-        self.data['ranked_' + self.factor] = (self.data[self.factor].rolling(window)
+        """同上"""
+        self.data['stad_' + self.factor] = (self.data[self.factor].rolling(window)
                                               .apply(lambda x: pd.rank(x)[-1] / (len(x) + 1)))
 
     # 正态化
     def log_trans(self):
-        self.data['log_' + self.factor] = np.log(self.data[self.factor])
+        """对数正态处理"""
+        self.data['log_' +self.factor] = np.log(self.data[self.factor])
 
     def pow_trans(self, power):
+        """
+        幂正态处理
+        :param power:幂次
+        """
         self.data['pow_' + self.factor] = self.data[self.factor] ** power
 
     def box_cox_trans(self):
-        self.data['box_cox_' + self.factor], lambda_ = stats.boxcox(self.data[self.factor])
+        """ Box Cox正态处理"""
+        self.data['bc_' + self.factor], lambda_ = stats.boxcox(self.data[self.factor])
 
     # 去趋势
     ## 历史分位值
     def formula_q(self, numbers, tier_size):
-        """ """
+        """"""
         if pd.isna(numbers):
             return None
         else:
@@ -96,28 +128,40 @@ class FactorTest:
             return q_values
 
     def transform_to_q(self, window, tier_size):
+        """"""
         factor_ranks = self.data[self.factor].rolling(window).rank() / window * 100
-        self.data[self.factor + f'_Q_{tier_size}'] = (factor_ranks.
+        self.data[self.factor + f'_Q{window}_{tier_size}'] = (factor_ranks.
                                             apply(lambda x: self.formula_q(x, tier_size) if not pd.isna(x) else None))
 
     ## Hodrick-Prescott 滤波
     def hp_filter(self, lamb):
+        """
+        :param lamb: lambda值
+        """
         self.data[self.factor + '_cycle'], self.data[self.factor + '_trend'] = hpfilter(self.data[self.factor], lamb)
 
     def IC(self, windows):
+        """
+        计算因子值与未来收益率的相关性
+        :param windows: 滚动窗口大小
+        """
         self.data['forward_return'] = self.data['return'].shift(-1)
         for window in windows:
-            self.data[f'IC_{window}'] = self.data['stad_'+self.factor].rolling(window).corr(self.data['forward_return'], method='pearson')
+            self.data[f'IC_{window}'] = self.data[self.factor].rolling(window).corr(self.data['forward_return'], method='pearson')
             self.data[f'RankIC_{window}'] = self.data[self.factor].rolling(window).corr(self.data['forward_return'], method='spearman')
             self.data[f'ICIR_{window}'] = self.data[f'IC_{window}'].rolling(window).apply(lambda x: x.mean()/x.std())
-            self.data[f'RankICIR_{window}'] = self.data[f'RankIC_{window}'].rolling(window).apply(lambda x: x.mean() / x.std())
+            self.data[f'RankICIR_{window}'] = self.data[f'RankIC_{window}'].rolling(window).apply(lambda x: x.mean()/x.std())
 
     def ols_regress(self, window):
+        """
+        ols回归评价因子解释力
+        :param window: 回归窗口大小
+        """
         ols_df = self.data[(self.data['date']>=self.reg_start_date)&(self.data['date']<=self.reg_end_date)].reset_index(drop=True)
-        ols_df['pred_return'] = None
-        ols_df[f'{self.factor}_coeff'] = None
-        ols_df[f'{self.factor}_t_value'] = None
-        ols_df['Rsquare'] = None
+        ols_df['reg_pred_return'] = None
+        ols_df['reg_coeff'] = None
+        ols_df[f'coeff_t_value'] = None
+        ols_df['reg_Rsquare'] = None
 
         total_iterations = len(ols_df)-window
         with tqdm(total=total_iterations) as pbar:
@@ -143,9 +187,14 @@ class FactorTest:
         self.data = ols_df
 
     def resample(self):
+        """重采样数据，用于后续测试"""
         self.data = self.data[(self.data['date']>=self.start_date)&(self.data['date']<=self.end_date)]
 
-    def period_test(self, test_list):  # 整体和分年度
+    def period_test(self, test_list):
+        """
+        分时段测试，整体和分年度
+        :param test_list: 测试的目标列表，例['IC_60', 'RankIC_60']
+        """
         self.data['year'] = self.data['date'].str[:4]
         x = self.data['date']
         dates = pd.to_datetime(x)
@@ -153,12 +202,13 @@ class FactorTest:
         fig, axes = plt.subplots(len(test_list)+1, 1, figsize=(20,10))
         # 循环画图
         for object, ax in zip(test_list, axes[:-1]):
-            ax.plot(x, self.data[object], label=object) 
+            ax.plot(x, self.data[object], label=object)
             # ax.bar(x, data, label=object)
             ax.xaxis.set_major_locator(plt.MaxNLocator(15))
             ax.set_title(f'{object}_Trend Chart')
             ax.legend()
 
+        # 构造汇总表格
         df = pd.DataFrame(columns=['2013', '2014', '2015', '2016', '2017', '2018',
                                    '2019', '2020', '2021', '2022', '2023', 'all_time'])
         for object in test_list:
@@ -182,23 +232,28 @@ class FactorTest:
 
         return fig
 
-    def factor_binning_test(self, tier_size1, tier_size2):
-        # factor_binning
+    def factor_binning_test(self, window, tier_size1, tier_size2):
+        """
+        因子分箱测试解释力
+        :param window: 滚动分位值的窗口大小
+        :param tier_size1: 刻画箱间单调性的分档，默认10为单位
+        :param tier_size2: 反映箱内解释力的分档，默认5为单位
+        """
         ## 箱间单调性
         fig2, ax2 =  plt.subplots(figsize=(20, 6))
-        self.transform_to_q(window=242, tier_size=tier_size1)
-        temp_mean_1 = self.data.groupby(self.factor + f'_Q_{tier_size1}')[f'reg_coeff'].mean()
-        temp_std_1 = self.data.groupby(self.factor + f'_Q_{tier_size1}')[f'reg_coeff'].std()
+        self.transform_to_q(window=window, tier_size=tier_size1)
+        temp_mean_1 = self.data.groupby(self.factor + f'_Q{window}_{tier_size1}')[f'reg_coeff'].mean()
+        temp_std_1 = self.data.groupby(self.factor + f'_Q{window}_{tier_size1}')[f'reg_coeff'].std()
         temp_IR_1 = temp_mean_1 / temp_std_1
-        #temp_winrate_1 = self.data.groupby(self.factor + f'_Q_{tier_size}')[f'{self.factor}_coeff'].apply(lambda x: (x>0).mean())
-        temp_mean_2 = self.data.groupby(self.factor + f'_Q_{tier_size1}')[f'returns_corr'].mean()
-        temp_std_2 = self.data.groupby(self.factor + f'_Q_{tier_size1}')[f'returns_corr'].std()
+        # temp_winrate_1 = self.data.groupby(self.factor + f'_Q_{tier_size}')[f'{self.factor}_coeff'].apply(lambda x: (x>0).mean())
+        temp_mean_2 = self.data.groupby(self.factor + f'_Q{window}_{tier_size1}')[f'returns_corr'].mean()
+        temp_std_2 = self.data.groupby(self.factor + f'_Q{window}_{tier_size1}')[f'returns_corr'].std()
         temp_IR_2 = temp_mean_2 / temp_std_2
-        #temp_winrate_2 = self.data.groupby(self.factor + f'_Q_{tier_size}')[f'return_corr'].apply(lambda x: (x>0).mean())
+        # temp_winrate_2 = self.data.groupby(self.factor + f'_Q_{tier_size}')[f'return_corr'].apply(lambda x: (x>0).mean())
         summary = pd.concat([temp_mean_1, temp_std_1, temp_IR_1,
                                   temp_mean_2, temp_std_2, temp_IR_2], axis=1)
         summary.columns =  ['reg_coeff_mean', 'reg_coeff_std', 'reg_coeff_IR',
-                            'return_corr_mean', 'returns_corr_std', 'returns_corr_IR']
+                            'return_corr_mean', 'returns_corr_std', 'returns_corr_IR']  # 回归系数均值，标准差，IR；预测收益与未来真实收益相关系数均值，标准差，IR
         summary.index.name = 'Tier'
         summary = summary.round(4)
         summary.reset_index(inplace=True)
@@ -211,19 +266,19 @@ class FactorTest:
         self.transform_to_q(window=242, tier_size=tier_size2)
         fig1, axes = plt.subplots(5,4, figsize=(20,20))
         for i, ax in enumerate(axes.flatten()):
-            temp_df = self.data[self.data[self.factor + f'_Q_5']==5*i].reset_index(drop=True)
+            temp_df = self.data[self.data[self.factor + f'_Q{window}_{tier_size2}']==tier_size2*i].reset_index(drop=True)
             x = temp_df.index
             y1 = temp_df[f'reg_coeff']
             y2 = temp_df[f'returns_corr']
             ax.plot(x, y1, label='coeff')
             ax.plot(x, y2, label='return_corr')
-            ax.set_title(f'Q = {5*i}')
+            ax.set_title(f'Q{window} = {5*i}')
             ax.legend()
         plt.tight_layout()
         return fig1, fig2
 
     def return_binning_test(self):
-        # return_binning
+        """收益率分箱测试"""
         ret_upper_threshold = self.data['forward_return'].mean() + 3 * self.data['forward_return'].std(ddof=1)
         ret_lower_threshold = self.data['forward_return'].mean() - 3 * self.data['forward_return'].std(ddof=1)
 
